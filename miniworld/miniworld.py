@@ -434,6 +434,19 @@ class Room:
         glEnd()
 
 
+class NamedRoom(Room):
+    def __init__(self,
+                 outline,
+                 wall_height=DEFAULT_WALL_HEIGHT,
+                 floor_tex="floor_tiles_bw",
+                 wall_tex="concrete",
+                 ceil_tex="concrete_tiles",
+                 no_ceiling=False,
+                 name=None):
+        super().__init__(outline, wall_height, floor_tex, wall_tex, ceil_tex, no_ceiling)
+        self.name = name
+
+
 class MiniWorldEnv(gym.Env):
     """
     Base class for MiniWorld environments. Implements the procedural
@@ -1441,3 +1454,91 @@ class MiniWorldEnv(gym.Env):
             return
 
         return img
+
+
+class NamedMiniWorldEnv(MiniWorldEnv):
+    def add_room(self, **kwargs):
+        """
+        Create a new named room
+        """
+
+        assert (
+            len(self.wall_segs) == 0
+        ), "cannot add rooms after static data is generated"
+
+        room = NamedRoom(**kwargs)
+        self.rooms.append(room)
+
+        return room
+
+    def connect_rooms(
+        self, room_a, room_b, min_x=None, max_x=None, min_z=None, max_z=None, max_y=None, name=None
+    ):
+        """
+        Connect two rooms along facing edges
+        """
+
+        def find_facing_edges():
+            for idx_a in range(room_a.num_walls):
+                norm_a = room_a.edge_norms[idx_a]
+
+                for idx_b in range(room_b.num_walls):
+                    norm_b = room_b.edge_norms[idx_b]
+
+                    # Reject edges that are not facing each other
+                    if np.dot(norm_a, norm_b) > -0.9:
+                        continue
+
+                    dir = room_b.outline[idx_b] - room_a.outline[idx_a]
+
+                    # Reject edges that are not touching
+                    if np.dot(norm_a, dir) > 0.05:
+                        continue
+
+                    return idx_a, idx_b
+
+            return None, None
+
+        idx_a, idx_b = find_facing_edges()
+        assert idx_a is not None, "matching edges not found in connect_rooms"
+
+        start_a, end_a = room_a.add_portal(
+            edge=idx_a, min_x=min_x, max_x=max_x, min_z=min_z, max_z=max_z, max_y=max_y
+        )
+
+        start_b, end_b = room_b.add_portal(
+            edge=idx_b, min_x=min_x, max_x=max_x, min_z=min_z, max_z=max_z, max_y=max_y
+        )
+
+        a = room_a.outline[idx_a] + room_a.edge_dirs[idx_a] * start_a
+        b = room_a.outline[idx_a] + room_a.edge_dirs[idx_a] * end_a
+        c = room_b.outline[idx_b] + room_b.edge_dirs[idx_b] * start_b
+        d = room_b.outline[idx_b] + room_b.edge_dirs[idx_b] * end_b
+
+        # If the portals are directly connected, stop
+        if np.linalg.norm(a - d) < 0.001:
+            return
+
+        len_a = np.linalg.norm(b - a)
+        len_b = np.linalg.norm(d - c)
+
+        # Room outline points must be specified in counter-clockwise order
+        outline = np.stack([c, b, a, d])
+        outline = np.stack([outline[:, 0], outline[:, 2]], axis=1)
+
+        max_y = max_y if max_y is not None else room_a.wall_height
+
+        room = NamedRoom(
+            outline,
+            wall_height=max_y,
+            wall_tex=room_a.wall_tex_name,
+            floor_tex=room_a.floor_tex_name,
+            ceil_tex=room_a.ceil_tex_name,
+            no_ceiling=room_a.no_ceiling,
+            name=name
+        )
+
+        self.rooms.append(room)
+
+        room.add_portal(1, start_pos=0, end_pos=len_a)
+        room.add_portal(3, start_pos=0, end_pos=len_b)
