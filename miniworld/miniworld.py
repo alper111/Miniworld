@@ -579,8 +579,11 @@ class MiniWorldEnv(gym.Env):
         # Shape is (N, 2, 3)
         self.wall_segs = []
 
+        if options is not None and "world_seed" in options:
+            np.random.seed(options["world_seed"])
         # Generate the world
         self._gen_world()
+        np.random.seed(seed)
 
         # Check if domain randomization is enabled or not
         rand = self.np_random if self.domain_rand else None
